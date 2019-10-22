@@ -1,8 +1,12 @@
+__pycache__
+.ipynb_checkpoints/
+
 *.pickle
 *.pq
 *.dmp
 *.tar.gz
 *.prt
 *.json
+
 readme.txt
 taxdump_readme.txt
