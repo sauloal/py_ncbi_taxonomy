@@ -12,11 +12,14 @@ from collections import OrderedDict
 import pandas as pd
 import numpy  as np
 import fastparquet
+from tqdm.auto import tqdm
 
 from tax import RANKS
 
 
-SEP = r'\t\|\t'
+tqdm.pandas()
+
+SEP = r'|'
 
 
 def gen_parents(nodes):
@@ -44,8 +47,10 @@ def gen_parents(nodes):
 def trim_last_col( x ):
 	return x.strip("|").strip("\t").strip().strip()
 
+
 def trimmer(x):
 	return x.strip("|\t ").strip("|\t ")
+
 
 def dnaf(x):
 	r = tuple(x.dropna())
@@ -93,7 +98,7 @@ def parse_dump(name, ifn, ofn, cols, converters, index_col=0, sep=SEP, post=None
 		df = pd.read_csv(
 			ifn,
 			engine='c',
-			sep='|',
+			sep=SEP,
 			header=None,
 			names=cols.keys(),
 			index_col=False,
@@ -142,10 +147,6 @@ def parse_division(save=True):
 
 	converters = {k: trimmer for k in cols.keys()}
 
-	# converters = {
-	# 	"division_comments": trim_last_col
-	# }
-
 	df = parse_dump(name, ifn, ofn, cols, converters, save=save)
 
 	return df
@@ -165,10 +166,6 @@ def parse_gencode(save=True):
 	))
 
 	converters = {k: trimmer for k in cols.keys()}
-
-	# converters = {
-	# 	"genetic_code_starts": trim_last_col
-	# }
 
 	df = parse_dump(name, ifn, ofn, cols, converters, save=save)
 
@@ -197,10 +194,6 @@ def parse_nodes(save=True):
 	))
 
 	converters = {k: trimmer for k in cols.keys()}
-
-	# converters = {
-	# 	"comments": trim_last_col
-	# }
 
 	df = parse_dump(name, ifn, ofn, cols, converters, save=save)
 
@@ -394,23 +387,43 @@ def get_all(save=True):
 	return nodes_names_gencode_division_parents
 
 
-def gen_asc(nodes, tax_id, asc=None, level=0):
-    if asc is None:
-        asc = [None]*len(RANKS)
+def gen_asc(all_data):
+	def gen_asc_apply(nodes, node):
+		asc = [None]*len(RANKS)
 
-    node          = nodes[nodes['tax_id'] == tax_id].iloc[0]
-    node_rank_id  = node['rank_id']
-    parent_tax_id = node['parent_tax_id']
+	#     print("node", node)
+		tax_id        = node.name
+		node_rank_id  = node['rank_id']
+		parent_tax_id = node['parent_tax_id']
 
-    # print(level, tax_id, node_rank_id, RANKS[node_rank_id], parent_tax_id)
+	#     print("level", level, "tax_id", tax_id, "node_rank_id", node_rank_id, RANKS[node_rank_id], "parent_tax_id", parent_tax_id)
 
-    assert ((asc[node_rank_id] is None) or (asc[node_rank_id] == tax_id)), (tax_id, node_rank_id, RANKS[node_rank_id], asc[node_rank_id], level, asc, node)
+		asc[node_rank_id] = tax_id
+		while node_rank_id != 0:
+			tax_id            = parent_tax_id
+			node              = nodes.loc[tax_id]
+			node_rank_id      = node['rank_id']
+			parent_tax_id     = node['parent_tax_id']
 
-    if node_rank_id != 0:
-        asc[node_rank_id] = tax_id
-        gen_asc(nodes, parent_tax_id, asc=asc, level=level+1)
+			assert ((asc[node_rank_id] is None) or \
+					(asc[node_rank_id] == tax_id)), \
+					(tax_id, node_rank_id, RANKS[node_rank_id], asc[node_rank_id], level, asc, node)
 
-    return asc
+			asc[node_rank_id] = tax_id
+
+		return [(l,asc[l]) for l in range(len(asc)) if asc[l] is not None]
+
+	all_data.reset_index(inplace=True)
+	all_data.set_index('tax_id', verify_integrity=True, inplace=True)
+
+	# all_data.head()
+	asc = all_data[['rank_id', 'parent_tax_id']].progress_apply(lambda node: gen_asc_apply(all_data, node), axis=1)
+
+	all_data.reset_index(inplace=True)
+
+	all_data['asc'] = asc
+
+	return all_data
 
 
 def gen_tree(all_data, asc, matrix, tree, rank=0):
@@ -436,84 +449,6 @@ def gen_tree(all_data, asc, matrix, tree, rank=0):
 		gen_tree(all_data, asc, matrix, el["chl"], rank=rank+1)
 
 
-# def post(df):
-# 	print("  post :: grouping")
-# 	sys.stdout.flush()
-
-# 	g = df.groupby('name_tax_id')
-
-# 	print("  post :: filtering txt")
-# 	sys.stdout.flush()
-
-# 	name_txt    = g['name_txt'   ].apply(dnaf).reset_index(name='name_txt')
-
-# 	print("  post :: filtering unique")
-# 	sys.stdout.flush()
-
-# 	name_unique = g['name_unique'].apply(dnaf).reset_index(name='name_unique')
-
-# 	print("  post :: filtering class")
-# 	sys.stdout.flush()
-
-# 	name_class  = g['name_class' ].apply(dnaf).reset_index(name='name_class' )
-
-# 	print("  post :: merging")
-# 	sys.stdout.flush()
-
-# 	txt_unique       = name_txt  .merge(name_unique, how='left', left_on='name_tax_id', right_on='name_tax_id', copy=False)
-# 	txt_unique_class = txt_unique.merge(name_class , how='left', left_on='name_tax_id', right_on='name_tax_id', copy=False)
-
-# 	print("  post :: converting class to category")
-# 	sys.stdout.flush()
-
-# 	txt_unique_class['name_class' ] = txt_unique_class['name_class' ].astype('category')
-
-# 	return txt_unique_class
-
-
-# def group_cols():
-#     names     = parser_pq.parse_names(save=False, fold=False)
-
-#     grp = OrderedDict()
-#     cols = [
-#         'name_txt',
-#         'name_unique',
-#         'name_class'
-#     ]
-
-
-#     for r, (_, row) in enumerate(names.iterrows()):
-#         if (r+1) % 100000 == 0:
-#             print("{:12,d} / {:12,d}".format(r+1, len(names)))
-#             sys.stdout.flush()
-
-#         group = row['name_tax_id']
-
-#         if group not in grp:
-#             grp[group] = [[] for _ in cols]
-
-#         for p, c in enumerate(cols):
-#             v = row[c]
-#             if not pd.isna(v):
-#                 grp[group][p].append(v)
-
-#     print(" cleaning empty")
-#     sys.stdout.flush()
-#     for data in grp.values():
-#         for p, _ in enumerate(cols):
-#             if len(data[p]) == 0:
-#                 data[p] = None
-
-#     print(" converting to dataframe")
-#     sys.stdout.flush()
-#     nnames = pd.DataFrame.from_dict(grp, orient='index', columns=cols)
-
-#     print(" done")
-#     sys.stdout.flush()
-
-#     return nnames
-
-
 def main():
 	FILTER_LEVEL = RANKS.index("genus")
 	FILTER_CLASS = "scientific name"
@@ -522,6 +457,8 @@ def main():
 	all_data = get_all()
 
 	# all_data['asc'] = all_data['tax_id'].head().map(lambda tax_id: gen_asc(all_data, tax_id))
+
+	all_data = gen_asc(all_data)
 
 	return
 
