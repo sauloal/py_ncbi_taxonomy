@@ -1,0 +1,6 @@
+fastparquet
+numpy
+pandas
+simplejson
+snappy
+tqdm

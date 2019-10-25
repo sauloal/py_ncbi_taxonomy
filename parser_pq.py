@@ -12,7 +12,7 @@ from collections import OrderedDict
 import pandas as pd
 import numpy  as np
 import fastparquet
-from tqdm.auto import tqdm
+from   tqdm.auto   import tqdm
 
 from tax import RANKS
 
@@ -283,16 +283,16 @@ def parse_names(save=True):
 	return df
 
 
-def get_all(save=True):
+def get_all(save=True, make_asc=True):
 	ofn = "pq_all.pq"
 
-	nodes_names_gencode_division_parents = None
+	all_data = None
 
 	if os.path.exists(ofn):
 		print(" reading", ofn)
 		sys.stdout.flush()
 
-		nodes_names_gencode_division_parents = pd.read_parquet(ofn, engine="fastparquet")
+		all_data = pd.read_parquet(ofn, engine="fastparquet")
 		
 	else:
 		print(" reading intermediate databases")
@@ -380,48 +380,84 @@ def get_all(save=True):
 
 		nodes_names_gencode_division_parents["rank_id"] = nodes_names_gencode_division_parents["rank"].apply(lambda x: RANKS.index(x))
 
+		all_data = nodes_names_gencode_division_parents
+
+		if make_asc:
+			all_data = gen_asc(all_data)
+
 		if save:
 			print(" saving merged data", ofn)
-			nodes_names_gencode_division_parents.to_parquet(ofn, engine="fastparquet", compression="snappy", index=True)#, partition_cols=)
+			all_data.to_parquet(ofn, engine="fastparquet", compression="snappy", index=True)#, partition_cols=)
 
-	return nodes_names_gencode_division_parents
+	return all_data
 
-
-def gen_asc(all_data):
-	def gen_asc_apply(nodes, node):
-		asc = [None]*len(RANKS)
-
-	#     print("node", node)
-		tax_id        = node.name
+def gen_asc_apply(nodes, node, par_ranks):
+	tax_id        = node.name
+	tids = str(tax_id)
+	
+	if tids in par_ranks:
+		node_rank_id, parent_tax_id = par_ranks[tids]
+	else:
 		node_rank_id  = node['rank_id']
 		parent_tax_id = node['parent_tax_id']
+		par_ranks[tids] = (node_rank_id, parent_tax_id)
 
-	#     print("level", level, "tax_id", tax_id, "node_rank_id", node_rank_id, RANKS[node_rank_id], "parent_tax_id", parent_tax_id)
+	asc               = [None]*len(RANKS)
 
+	if tax_id == parent_tax_id:
+		asc = []
+	else:
 		asc[node_rank_id] = tax_id
-		while node_rank_id != 0:
-			tax_id            = parent_tax_id
-			node              = nodes.loc[tax_id]
-			node_rank_id      = node['rank_id']
-			parent_tax_id     = node['parent_tax_id']
+		while True:
+			if node_rank_id == 0:
+				break
 
-			assert ((asc[node_rank_id] is None) or \
-					(asc[node_rank_id] == tax_id)), \
-					(tax_id, node_rank_id, RANKS[node_rank_id], asc[node_rank_id], level, asc, node)
+			if tax_id == parent_tax_id:
+				break
 
-			asc[node_rank_id] = tax_id
+			tax_id = parent_tax_id
+			tids   = str(tax_id)
+			if tids in par_ranks:
+				node_rank_id, parent_tax_id = par_ranks[tids]
+			else:
+				node          = nodes.loc[tax_id]
+				node_rank_id  = node['rank_id']
+				parent_tax_id = node['parent_tax_id']
+				par_ranks[tids] = (node_rank_id, parent_tax_id)
+			
+			asc_node_rank_id = asc[node_rank_id]
+			if (asc_node_rank_id is not None) and (asc_node_rank_id != tax_id):
+				asc = []
+				break
+			else:
+				asc[node_rank_id] = int(tax_id)
+	
+	if len(asc) == 0:
+		asc = None
+	else:
+		asc = [(l,asc[l]) for l in range(len(asc)) if asc[l] is not None]
 
-		return [(l,asc[l]) for l in range(len(asc)) if asc[l] is not None]
+	return json.dumps(asc)
 
-	all_data.reset_index(inplace=True)
+def gen_asc(all_data):
+	try:
+		all_data.reset_index(inplace=True)
+	except:
+		pass
+
+	if 'asc' in all_data.columns:
+		all_data.drop('asc', inplace=True, axis=1)
+	if 'level_0' in all_data.columns:
+		all_data.drop('level_0', inplace=True, axis=1)
+	if 'index' in all_data.columns:
+		all_data.drop('index', inplace=True, axis=1)
+		
 	all_data.set_index('tax_id', verify_integrity=True, inplace=True)
 
-	# all_data.head()
-	asc = all_data[['rank_id', 'parent_tax_id']].progress_apply(lambda node: gen_asc_apply(all_data, node), axis=1)
+	par_ranks = {}
+	all_data['asc'] = all_data[['rank_id', 'parent_tax_id']].progress_apply(lambda node: gen_asc_apply(all_data, node, par_ranks), axis=1)
 
 	all_data.reset_index(inplace=True)
-
-	all_data['asc'] = asc
 
 	return all_data
 
@@ -457,8 +493,6 @@ def main():
 	all_data = get_all()
 
 	# all_data['asc'] = all_data['tax_id'].head().map(lambda tax_id: gen_asc(all_data, tax_id))
-
-	all_data = gen_asc(all_data)
 
 	return
 
