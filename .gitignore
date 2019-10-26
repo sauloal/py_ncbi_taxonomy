@@ -1,5 +1,6 @@
 __pycache__
 .ipynb_checkpoints/
+trees/
 
 *.pickle
 *.pq
@@ -7,6 +8,7 @@ __pycache__
 *.tar.gz
 *.prt
 *.json
+*.pkl
 
 readme.txt
 taxdump_readme.txt

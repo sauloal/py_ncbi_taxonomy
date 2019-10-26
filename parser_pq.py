@@ -4,22 +4,26 @@ import os
 import sys
 import re
 import csv
-
-import simplejson as json
+import pickle
 
 from collections import OrderedDict
 
+import simplejson as json
+
 import pandas as pd
 import numpy  as np
+import scipy  as sc
 import fastparquet
-from   tqdm.auto   import tqdm
+from   tqdm.auto       import tqdm
+from   IPython.display import display
 
 from tax import RANKS
-
 
 tqdm.pandas()
 
 SEP = r'|'
+
+print("parser PQ")
 
 
 def gen_parents(nodes):
@@ -58,6 +62,14 @@ def dnaf(x):
 		return None
 	else:
 		return r
+
+
+def display_df(df):
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        if len(df) <= 4:
+            display(df)
+        else:
+            display(pd.concat([df.head(2), df.tail(2)]))
 
 
 def gen_parents(all_data):
@@ -310,7 +322,7 @@ def get_all(save=True, make_asc=True):
 
 		nodes_names = nodes.merge(names, how='left', left_on='tax_id', right_on='name_tax_id', copy=False)
 		# nodes_names.index.name = 'tax_id'
-		print(pd.concat([nodes_names.head(), nodes_names.tail()]))
+		display_df(nodes_names)
 
 		print("  shape  nodes_names")
 		print(nodes_names.shape)
@@ -328,7 +340,7 @@ def get_all(save=True, make_asc=True):
 
 		nodes_names_gencode = nodes_names.merge(gencode, how='left', left_on='genetic_code_id', right_on='genetic_code_id', copy=False)
 		# nodes_names_gencode.index.name = 'tax_id'
-		print(pd.concat([nodes_names_gencode.head(), nodes_names_gencode.tail()]))
+		display_df(nodes_names_gencode)
 
 		print("  shape  nodes_names_gencode")
 		print(nodes_names_gencode.shape)
@@ -346,7 +358,7 @@ def get_all(save=True, make_asc=True):
 
 		nodes_names_gencode_division = nodes_names_gencode.merge(divisions, how='left', left_on='division_id', right_on='division_id', copy=False)
 		# nodes_names_gencode_division.index.name = 'tax_id'
-		print(pd.concat([nodes_names_gencode_division.head(), nodes_names_gencode_division.tail()]))
+		display_df(nodes_names_gencode_division)
 
 		print("shape  nodes_names_gencode_division")
 		print(nodes_names_gencode_division.shape)
@@ -363,7 +375,7 @@ def get_all(save=True, make_asc=True):
 		sys.stdout.flush()
 
 		nodes_names_gencode_division_parents = gen_parents(nodes_names_gencode_division)
-		print(pd.concat([nodes_names_gencode_division_parents.head(), nodes_names_gencode_division_parents.tail()]))
+		display_df(nodes_names_gencode_division_parents)
 
 		print("  shape  nodes_names_gencode_division_parents")
 		print(nodes_names_gencode_division_parents.shape)
@@ -391,23 +403,27 @@ def get_all(save=True, make_asc=True):
 
 	return all_data
 
+
 def gen_asc_apply(nodes, node, par_ranks):
-	tax_id        = node.name
-	tids = str(tax_id)
+	tax_id = node.name
+	tids   = str(tax_id)
 	
 	if tids in par_ranks:
-		node_rank_id, parent_tax_id = par_ranks[tids]
+		tax_id, node_rank_id, parent_tax_id = par_ranks[tids]
 	else:
-		node_rank_id  = node['rank_id']
-		parent_tax_id = node['parent_tax_id']
-		par_ranks[tids] = (node_rank_id, parent_tax_id)
+		node_rank_id    = node['rank_id'      ]
+		parent_tax_id   = node['parent_tax_id']
+		par_ranks[tids] = (tax_id, node_rank_id, parent_tax_id)
 
-	asc               = [None]*len(RANKS)
+	asc = [None]*len(RANKS)
 
 	if tax_id == parent_tax_id:
 		asc = []
+	
 	else:
-		asc[node_rank_id] = tax_id
+		orig_tax_id       = int(tax_id)
+		# asc[node_rank_id] = int(tax_id)
+		
 		while True:
 			if node_rank_id == 0:
 				break
@@ -418,26 +434,36 @@ def gen_asc_apply(nodes, node, par_ranks):
 			tax_id = parent_tax_id
 			tids   = str(tax_id)
 			if tids in par_ranks:
-				node_rank_id, parent_tax_id = par_ranks[tids]
+				tax_id, node_rank_id, parent_tax_id = par_ranks[tids]
 			else:
-				node          = nodes.loc[tax_id]
-				node_rank_id  = node['rank_id']
-				parent_tax_id = node['parent_tax_id']
-				par_ranks[tids] = (node_rank_id, parent_tax_id)
-			
-			asc_node_rank_id = asc[node_rank_id]
-			if (asc_node_rank_id is not None) and (asc_node_rank_id != tax_id):
-				asc = []
+				node            = nodes.loc[tax_id]
+				node_rank_id    = node['rank_id'      ]
+				parent_tax_id   = node['parent_tax_id']
+				par_ranks[tids] = (tax_id, node_rank_id, parent_tax_id)
+
+			if node_rank_id == 0:
 				break
+
+			if tax_id == parent_tax_id:
+				break
+
+			asc_node_rank_id = asc[node_rank_id]
+			if asc_node_rank_id is not None:
+				if asc_node_rank_id != tax_id:
+					asc = []
+					break
 			else:
 				asc[node_rank_id] = int(tax_id)
-	
+
 	if len(asc) == 0:
 		asc = None
 	else:
 		asc = [(l,asc[l]) for l in range(len(asc)) if asc[l] is not None]
+		if len(asc) == 0:
+			asc = None
 
 	return json.dumps(asc)
+
 
 def gen_asc(all_data):
 	try:
@@ -459,30 +485,183 @@ def gen_asc(all_data):
 
 	all_data.reset_index(inplace=True)
 
+	display_df(all_data)
+
+	print("  shape  all_data")
+	print(all_data.shape)
+
+	print("  dtypes all_data")
+	print(all_data.dtypes)
+
+	print("  info   all_data")
+	print(all_data.info())
+
 	return all_data
 
 
-def gen_tree(all_data, asc, matrix, tree, rank=0):
-	if rank >= len(asc):
-		return
+def gen_tree_sub(asc, tree):
+    #print('asc', asc, 'tree', tree)
+    h = tree
+    
+    for pos, (rank_id, tax_id) in enumerate(asc):
+        par = None
+        if pos == 0:
+            par = None
+        else:
+            par = asc[pos - 1][1]
 
-	tax_id    = asc[rank]
-	if tax_id is None:
-		gen_tree(all_data, asc, matrix, tree, rank=rank+1)
+        if tax_id not in tree:
+            h[tax_id] = OrderedDict()
+        
+        el = h[tax_id]
+        
+        if "chl" not in el:
+            el["tid"] = tax_id
+            el["rid"] = rank_id
+            el["par"] = par
+            el["chl"] = OrderedDict()
+            h         = el["chl"]
+        else:
+            h         = el["chl"]
+            
+    return tree
+
+
+def gen_tree(all_data):
+	tree   = OrderedDict()
+
+	not_parent          = ~all_data['is_parent']
+	not_null            = all_data['asc'] != 'null'
+	not_parent_not_null = not_parent & not_null
+	print("all_data           ", all_data.shape)
+	print("not_parent         ", not_parent.sum())
+	print("not_null           ", not_null.sum())
+	print("not_parent_not_null", not_parent_not_null.sum())
+
+	with tqdm(total=not_parent_not_null.sum()) as pbar:
+		for row_id, row in all_data[not_parent_not_null].iterrows():
+			pbar.update()
+		#     print(row_id, row)
+			asc = json.loads(row['asc'])
+
+			if asc is not None:
+				tree = gen_tree_sub(asc, tree)
+
+		#     if row_id >= 1000:
+		#         break
+
+		# print(json.dumps(tree, indent=1))
+
+	pkl       = 'trees.pkl'
+	print(" saving tree", pkl)
+	sys.stdout.flush()
+
+	with open(pkl, 'wb') as fhd:
+		pickle.dump(tree, fhd, protocol=0)
+		
+	return tree
+
+
+def tree_to_newick(tree):
+    newick = []
+    for tax_id, data in tree.items():
+        chl, l = tree_to_newick(data['chl'])
+        # print("tax_id", tax_id, " chl", chl, "l", l, "data", data)
+        if   l == 0:
+            newick.append("s{}".format(tax_id))
+        elif l == 1:
+            newick.append("({})s{}".format(chl, tax_id))
+        else:
+            newick.append("({})s{}".format(chl, tax_id))
+
+    if len(newick) == 0:
+        return "", 0
+    if len(newick) == 1:
+        return "{}".format(newick[0]), len(newick)
+    else:
+        return "({})".format(",".join(newick)), len(newick)
+
+
+def dump_tree_as_newick(all_data, tree):
+	with tqdm(total=len(tree)) as pbar:
+		for root_parent_tax_id, child_tree in tree.items():
+			pbar.update()
+			root_parent   = all_data[all_data['tax_id'] == root_parent_tax_id]
+			division_cde  = root_parent['division_cde' ].tolist()[0]
+			division_name = root_parent['division_name'].tolist()[0]
+			rank          = root_parent['rank'         ].tolist()[0]
+			name          = root_parent['name_txt'     ].tolist()[0]
+
+			name = json.loads(name)[0]
+		    # print(root_parent)
+		    # print(child_tree)
+			# print(root_parent_tax_id, division_cde, division_name, name)
+			sys.stdout.flush()
+
+			if not os.path.exists('trees'):
+				os.makedirs('trees')
+
+			bn = '{:09d}_{}_{}_{}_{}'.format(root_parent_tax_id, division_cde, division_name, rank, name)
+			bn = bn.replace("/", "_").replace("\\", "_").replace('"', "").replace("'", "").replace(r" ", "_").replace(r"__", "_").replace(r"__", "_")
+			bn = os.path.join('trees', bn)
+			# print(" basename", bn)
+
+			# print(" creating newick")
+			sys.stdout.flush()
+			newick, _ = tree_to_newick({root_parent_tax_id: child_tree})
+			nwk       = '{}.newick'.format(bn)
+
+			# print(" saving newick", nwk)
+			sys.stdout.flush()
+			with open(nwk, 'wt') as fhd:
+				fhd.write("(")
+				fhd.write(newick)
+				fhd.write(")root;")
+
+
+def gen_matrix(all_data):
+	# #https://www.geeksforgeeks.org/construct-tree-from-ancestor-matrix/
+
+	sparse_matrix = sc.sparse.dok_matrix
+	len_all_data  = all_data['tax_id'].max()
+	print("len_all_data", len_all_data)
+	sm            = sparse_matrix((len_all_data,len_all_data), dtype=np.int8)
+	print("sm", repr(sm))
+
+	not_parent          = ~all_data['is_parent']
+	not_null            = all_data['asc'] != 'null'
+	not_parent_not_null = not_parent & not_null
+
+	print("all_data           ", all_data.shape)
+	print("not_parent         ", not_parent.sum())
+	print("not_null           ", not_null.sum())
+	print("not_parent_not_null", not_parent_not_null.sum())
+
+	with tqdm(total=not_parent_not_null.sum()) as pbar:
+		for row_id, row in all_data[not_parent_not_null].iterrows():
+			pbar.update()
+			asc = json.loads(row['asc'])
+
+			if asc is not None and len(asc) > 1:
+				# print("asc", asc)
+				for a in range(len(asc)-1):
+					a_lvl, a_id = asc[a]
+					# print("  a_id", a_id)
+					for b in range(a+1, len(asc)):
+						b_lvl, b_id = asc[b]
+						# print("   b_id", b_id)
+						sm[a_id, b_id] = 1
 	
-	else:
-		if tax_id not in tree:
-			tree[tax_id] = OrderedDict()
-			# tree[tax_id].update(all_data.get(tax_id).as_dict())
+	print("sm", repr(sm))
+	# print("sm nnz", sm.nnz)
+	# print("sm dok", sm.todok())
 
-		el = tree[tax_id]
+	print("saving pq_matrix.pickle")
+	sys.stdout.flush()
+	with open("pq_matrix.pickle", "wb") as fhd:
+		pickle.dump(sm, fhd, protocol=0)
 
-		if "chl" not in el:
-			el["tid"] = tax_id
-			el["rid"] = rank
-			el["chl"] = OrderedDict()
-
-		gen_tree(all_data, asc, matrix, el["chl"], rank=rank+1)
+	return sm
 
 
 def main():
@@ -490,156 +669,66 @@ def main():
 	FILTER_CLASS = "scientific name"
 	FILTER_VAL   = "Solanum"
 
-	all_data = get_all()
+	all_data     = get_all(save=True, make_asc=True)
 
-	# all_data['asc'] = all_data['tax_id'].head().map(lambda tax_id: gen_asc(all_data, tax_id))
+	print("ALL DATA")
+	print(all_data.shape)
+	display_df(all_data)
 
-	return
+	print("HAS ASC")
+	print(all_data[all_data['asc']=='null'].shape)
+	display_df(all_data[all_data['asc']=='null'])
 
+	print("NO ASC")
+	print(all_data[all_data['asc']!='null'].shape)
+	display_df(all_data[all_data['asc']!='null'])
 
-	all_data     = None
-	out_data     = None
-	individuals  = None
-	parents      = None
-	matrix       = None
+	print("NO RANK")
+	print(all_data[all_data['rank']=='no rank'].shape)
+	display_df(all_data[all_data['rank']=='no rank'])
 
-	if os.path.exists("db_out_all_data.pickle") and os.path.exists("db_out_matrix.pickle"):
-		print("loading db_out_all_data.pickle")
-		sys.stdout.flush()
-		with open("db_out_all_data.pickle", "rb") as fhd:
-			all_data = pickle.load(fhd)
+	print("REALM")
+	print(all_data[all_data['rank']=='realm'].shape)
+	display_df(all_data[all_data['rank']=='realm'])
 
-		print("loading db_out_matrix.pickle")
-		sys.stdout.flush()
-		with open("db_out_matrix.pickle", "rb") as fhd:
-			matrix = pickle.load(fhd)
+	print("SUB REALM")
+	print(all_data[all_data['rank']=='subrealm'].shape)
+	display_df(all_data[all_data['rank']=='subrealm'])
 
-	else:
-		print("creating all data")
-		sys.stdout.flush()
+	print("DOMAIN")
+	print(all_data[all_data['rank']=='domain'].shape)
+	display_df(all_data[all_data['rank']=='domain'])
 
-		all_data    = AllData()
-	
-		out_data    = OrderedDict()
-		individuals = OrderedDict()
-		parents     = OrderedDict()
+	print("SUPER KINGDOMS")
+	print(all_data[all_data['rank']=='superkingdom'].shape)
+	display_df(all_data[all_data['rank']=='superkingdom'])
 
-		print("summarizing data")
-		sys.stdout.flush()
+	print("KINGDOMS")
+	print(all_data[all_data['rank']=='kingdom'].shape)
+	display_df(all_data[all_data['rank']=='kingdom'])
 
-		par_ids = all_data.search_by_name(FILTER_VAL)
-		print(" par_ids", par_ids)
-
-		ascs   = []
-		max_id = 0
-		for row in all_data:
-			# print(row.tax_id)
-
-			if row.asc is None:
-				# print( " no asc")
-				continue
-
-			fl = row.asc[FILTER_LEVEL]
-			if fl is None:
-				# print( " no fl", FILTER_LEVEL)
-				continue
-
-			if fl not in par_ids:
-				continue
-
-			print( row )
-
-			out_data[row.tax_id] = row
-
-			if row.is_parent:
-				parents[row.tax_id] = row
-			else:
-				individuals[row.tax_id] = row
-				ascs.append(row.asc)
-				max_id = max([row.tax_id, max_id])
-		
-		print("  out_data    {:12,d}".format(len(out_data   )))
-		print("  individuals {:12,d}".format(len(individuals)))
-		print("  parents     {:12,d}".format(len(parents    )))
-		print("  max_id      {:12,d}".format(max_id          ))
-		sys.stdout.flush()
-
-		# #https://www.geeksforgeeks.org/construct-tree-from-ancestor-matrix/
-		# matrix = [0 for p in range(max_id * max_id)]
-
-		# for asc in ascs:
-		# 	for r in range(len(asc) - 1, 0, -1):
-		# 		rv = asc[r]
-		# 		if rv is None:
-		# 			continue
-		# 		for l in range(r - 1):
-		# 			lv = asc[l]
-		# 			if lv is None:
-		# 				continue
-		# 			matrix[rv * lv] = 1
-
-		print("saving db_out_all_data.pickle")
-		sys.stdout.flush()
-		with open("db_out_all_data.pickle", "wb") as fhd:
-			pickle.dump(all_data, fhd, protocol=0)
-
-		print("saving db_out_rows.pickle")
-		sys.stdout.flush()
-		with open("db_out_rows.pickle", "wb") as fhd:
-			pickle.dump(out_data, fhd, protocol=0)
-
-		print("saving db_out_rows_parents.pickle")
-		sys.stdout.flush()
-		with open("db_out_rows_parents.pickle", "wb") as fhd:
-			pickle.dump(parents, fhd, protocol=0)
-
-		print("saving db_out_rows_individuals.pickle")
-		sys.stdout.flush()
-		with open("db_out_rows_individuals.pickle", "wb") as fhd:
-			pickle.dump(individuals, fhd, protocol=0)
-
-		print("saving db_out_matrix.pickle")
-		sys.stdout.flush()
-		with open("db_out_matrix.pickle", "wb") as fhd:
-			pickle.dump(matrix, fhd, protocol=0)
-
-			
-
-
-	print("creating tree")
+	print(" CREATING TREE")
 	sys.stdout.flush()
-	tree        = OrderedDict()
-	rows        = OrderedDict()
-	for row_num, row in enumerate(all_data):
-		# print(tax_id, row.tax_id])
-		rows[row.tax_id] = row
+	tree      = gen_tree(all_data)
 
-		if row.asc:
-			# print(row.tax_id, row.asc)
-			gen_tree(all_data, row.asc, matrix, tree)
-
-		# if row_num == 100:
-		# 	break
-	
-	print("saving json tree")
+	print(" SAVING TREES AS NEWICK")
 	sys.stdout.flush()
-	# print(json.dumps(tree, indent=1, for_json=True))
-	with open("db_tree.json", "wt") as fhd:
+	dump_tree_as_newick(all_data, tree)
+
+	print(" CREATING ANCESTOR MATRIX")
+	sys.stdout.flush()
+	ancestor_matrix = gen_matrix(all_data)
+	
+	print("SAVING JSON TREE")
+	sys.stdout.flush()
+	with open("pq_tree.json", "wt") as fhd:
 		json.dump(tree, fhd, indent=1, for_json=True)
 
-	print("saving json data")
+	print("SAVING JSON RANKS")
 	sys.stdout.flush()
-	# print(json.dumps(tree, indent=1, for_json=True))
-	with open("db_tree_data.json", "wt") as fhd:
-		json.dump(rows, fhd, indent=1, for_json=True)
-
-	print("saving json ranks")
-	sys.stdout.flush()
-	# print(json.dumps(tree, indent=1, for_json=True))
-	with open("db_tree_ranks.json", "wt") as fhd:
+	with open("pq_tree_ranks.json", "wt") as fhd:
 		json.dump(RANKS, fhd, indent=1, for_json=True)
 
-RANKS
 
 if __name__ == "__main__":
 	main()

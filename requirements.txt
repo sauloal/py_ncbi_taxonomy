@@ -1,5 +1,6 @@
 fastparquet
 numpy
+scipy
 pandas
 simplejson
 snappy
