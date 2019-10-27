@@ -21,6 +21,8 @@ from tax import RANKS
 
 tqdm.pandas()
 
+__version__ = '191027.2130'
+
 SEP = r'|'
 
 print("parser PQ")
@@ -32,7 +34,8 @@ def gen_parents(nodes):
 
 	parents   = OrderedDict()
 	
-	print(" nodes", nodes.head())
+	print(" nodes")
+	display_df(nodes)
 
 	parents = nodes["parent_tax_id"].unique().tolist()
 	ids     = nodes["tax_id"       ].unique().tolist()
@@ -48,7 +51,7 @@ def gen_parents(nodes):
 	return no_parents, parents
 
 
-def trim_last_col( x ):
+def trim_last_col(x):
 	return x.strip("|").strip("\t").strip().strip()
 
 
@@ -64,12 +67,12 @@ def dnaf(x):
 		return r
 
 
-def display_df(df):
+def display_df(df, window=2):
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-        if len(df) <= 4:
+        if len(df) <= (2*window):
             display(df)
         else:
-            display(pd.concat([df.head(2), df.tail(2)]))
+            display(pd.concat([df.head(window), df.tail(window)]))
 
 
 def gen_parents(all_data):
@@ -138,8 +141,7 @@ def parse_dump(name, ifn, ofn, cols, converters, index_col=0, sep=SEP, post=None
 	print("  ", name, df.shape)
 	print("    dtypes\n", df.dtypes)
 	print("    info\n", df.info())
-	# print([e for e in list(df['comments'])])
-	print(pd.concat([df.head(), df.tail()]))
+	display_df(df)
 	sys.stdout.flush()
 
 	return df
@@ -291,6 +293,11 @@ def parse_names(save=True):
 			sys.stdout.flush()
 
 			df.to_parquet(ofn, engine="fastparquet", compression="snappy", index=True)#, partition_cols=)
+
+	print("  ", name, df.shape)
+	print("    dtypes\n", df.dtypes)
+	print("    info\n", df.info())
+	display_df(df)
 
 	return df
 
@@ -552,13 +559,18 @@ def gen_tree(all_data):
 
 		# print(json.dumps(tree, indent=1))
 
-	pkl       = 'trees.pkl'
-	print(" saving tree", pkl)
+	pkl       = 'pq_trees.pkl'
+	print(" saving tree as pickle", pkl)
 	sys.stdout.flush()
 
 	with open(pkl, 'wb') as fhd:
 		pickle.dump(tree, fhd, protocol=0)
-		
+
+	print(" saving tree as json")
+	sys.stdout.flush()
+	with open("pq_tree.json", "wt") as fhd:
+		json.dump(tree, fhd, indent=1, for_json=True)
+
 	return tree
 
 
@@ -602,7 +614,8 @@ def dump_tree_as_newick(all_data, tree):
 				os.makedirs('trees')
 
 			bn = '{:09d}_{}_{}_{}_{}'.format(root_parent_tax_id, division_cde, division_name, rank, name)
-			bn = bn.replace("/", "_").replace("\\", "_").replace('"', "").replace("'", "").replace(r" ", "_").replace(r"__", "_").replace(r"__", "_")
+			bn = "".join(["_" if b in "\\/()[]{}.-'\" " else b for b in bn])
+			bn = bn.replace("__", "_").replace("__", "_").replace("__", "_")
 			bn = os.path.join('trees', bn)
 			# print(" basename", bn)
 
@@ -620,7 +633,7 @@ def dump_tree_as_newick(all_data, tree):
 
 
 def gen_matrix(all_data):
-	# #https://www.geeksforgeeks.org/construct-tree-from-ancestor-matrix/
+	# https://www.geeksforgeeks.org/construct-tree-from-ancestor-matrix/
 
 	sparse_matrix = sc.sparse.dok_matrix
 	len_all_data  = all_data['tax_id'].max()
@@ -656,9 +669,9 @@ def gen_matrix(all_data):
 	# print("sm nnz", sm.nnz)
 	# print("sm dok", sm.todok())
 
-	print("saving pq_matrix.pickle")
+	print("saving pq_matrix.pkl")
 	sys.stdout.flush()
-	with open("pq_matrix.pickle", "wb") as fhd:
+	with open("pq_matrix.pkl", "wb") as fhd:
 		pickle.dump(sm, fhd, protocol=0)
 
 	return sm
@@ -718,11 +731,6 @@ def main():
 	print(" CREATING ANCESTOR MATRIX")
 	sys.stdout.flush()
 	ancestor_matrix = gen_matrix(all_data)
-	
-	print("SAVING JSON TREE")
-	sys.stdout.flush()
-	with open("pq_tree.json", "wt") as fhd:
-		json.dump(tree, fhd, indent=1, for_json=True)
 
 	print("SAVING JSON RANKS")
 	sys.stdout.flush()
